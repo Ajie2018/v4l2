@@ -29,16 +29,123 @@ int main(void){
         if(cap.capabilities & V4L2_CAP_READWRITE)  printf("v4l2 dev support read write\n");  
     }
     
-    //2.query device capability
-    //2.1 list valid input
+    //3.query device capability
+    //3.1 list valid input
     struct v4l2_input input;
     input.index=0;
     while(!ioctl(fd,VIDIOC_ENUMINPUT,&input)){
         printf("input:%s\n",input.name);
         ++input.index;
     }
-    //2.2 set valid input
+    //3.2 set valid input
+    input.index=1;
+    if(ioctl(fd,VIDIOC_S_INPUT,&input)<0){
+        printf("ERROR(%s):VIDIOC_S_INPUT failed!\n",__func__);
+        return -1;
+    }
 
+    //4.set imagine type
+    struct v4l2_fmtdesc fmtdesc;
+    fmtdesc.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    fmtdesc.index=0;
+    while(!ioctl(fd,VIDIOC_ENUM_FMT,&fmtdesc)){
+        printf("fmt:%s\n",fmtdesc.description);
+        fmtdesc.index++;
+    }
+    
+    struct v4l2_format format;
+    memset(&format,0,sizeof(struct v4l2_format));
+    format.type=V4L2_BUF_TYPE_META_CAPTURE;
+    format.fmt.pix.width=640;
+    format.fmt.pix.height=480;
+    format.fmt.pix.pixelformat=V4L2_PIX_FMT_YUYV;
+    format.fmt.pix.field=V4L2_FIELD_ANY;
+
+    if(ioctl(fd,VIDIOC_S_FMT,&format)){
+        printf("ERROR(%s):VIDIOC_S_FMT failed!\n",__func__);
+        return -1;
+    }
+
+    //5.1 ask kernel memory
+    struct v4l2_requestbuffers reqbuffer;
+    reqbuffer.count=4;
+    reqbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    reqbuffer.memory=V4L2_MEMORY_MMAP;
+
+    if(ioctl(fd,VIDIOC_REQBUFS,&reqbuffer)<0){
+        printf("ERROR(%s):VIDIOC_REQBUFS failed\n",__func__);
+        return -1;
+    }
+    //5.2 map user buffer
+    struct v4l2_buffer mapbuffer;
+    void *mapaddr[4];
+    unsigned int mapsize[4];
+
+    for(int i=0;i<4;++i){
+        memset(&mapbuffer,0,sizeof(struct v4l2_buffer));
+        mapbuffer.index=i;
+        mapbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        mapbuffer.memory=V4L2_MEMORY_MMAP;
+        ret=ioctl(fd,VIDIOC_QUERYBUF,&mapbuffer);
+        if(ret<0){
+            printf("unable to query buffer.\n");
+            return -1;
+        }
+        mapaddr[i]=mmap(NULL,     //start anywhere
+                  mapbuffer.length,PROT_READ|PROT_WRITE,MAP_SHARED,
+                  fd,mapbuffer.m.offset);
+        mapsize[i]=mapbuffer.length;
+    }
+    
+    //5.3 put all buffer into queue
+    for(int i=0;i<4;++i){
+        memset(&mapbuffer,0,sizeof(struct v4l2_buffer));
+        mapbuffer.index=i;
+        mapbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        mapbuffer.memory=V4L2_MEMORY_MMAP;
+        ret=ioctl(fd,VIDIOC_QBUF,&mapbuffer);
+        if(ret<0){
+            printf("unable to queue buffer.\n");
+            return -1;
+        }
+    }
+    
+    //6 start stream imagine
+    enum v4l2_buf_type buftype=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if(ioctl(fd,VIDIOC_STREAMON,&buftype)<0){
+        printf("ERROR(%s):VIDIOC_STREAMON failed.\n",__func__);
+        return -1;
+    }
+    
+    //7 start read data
+    /* struct pollfd pollfd[1]; */
+    /* pollfd[0].fd=fd; */
+    /* pollfd[0].events=POLLIN;    //waitting reading data */    
+    /* poll(pollfd,1,10000) */
+    struct v4l2_buffer readbuffer;
+    readbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    readbuffer.memory=V4L2_MEMORY_MMAP;
+
+    if(ioctl(fd,VIDIOC_DQBUF,&readbuffer)<0){
+        printf("ERROR(%s):VIDIOC_DQBUF failed.\n",__func__);
+        return -1;
+    }
+
+    readbuffer.index=0;
+    if(ioctl(fd,VIDIOC_QBUF,&readbuffer)<0){
+        printf("ERROR(%s):VIDIOC_QBUF failed.\n",__func__);
+        return -1;
+    }
+    
+    //8.close stream imagine and release map
+    if(ioctl(fd,VIDIOC_STREAMOFF,&buftype)<0){
+        printf("ERROR(%s):VIDIOC_STREAMOFF failed.\n",__func__);
+        return -1;
+    }
+    for(int i=0;i<4;++i){
+        munmap(mapaddr[i],mapsize[i]);
+    }
+    
     //9.close device 
     close(fd);
 
