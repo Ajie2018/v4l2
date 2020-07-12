@@ -8,11 +8,12 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
+#include <poll.h>
 
 int main(void){
     int ret;    //define variable of return
     //1.open device 
-    const int fd = open("/dev/video1",O_RDWR); 
+    const int fd = open("/dev/video0",O_RDWR); 
     if(fd < 0) perror("open video device failed!\n");
 
     //2.query device capability
@@ -38,7 +39,7 @@ int main(void){
         ++input.index;
     }
     //3.2 set valid input
-    input.index=1;
+    input.index=0;
     if(ioctl(fd,VIDIOC_S_INPUT,&input)<0){
         printf("ERROR(%s):VIDIOC_S_INPUT failed!\n",__func__);
         return -1;
@@ -55,7 +56,7 @@ int main(void){
     
     struct v4l2_format format;
     memset(&format,0,sizeof(struct v4l2_format));
-    format.type=V4L2_BUF_TYPE_META_CAPTURE;
+    format.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     format.fmt.pix.width=640;
     format.fmt.pix.height=480;
     format.fmt.pix.pixelformat=V4L2_PIX_FMT_YUYV;
@@ -118,10 +119,10 @@ int main(void){
     }
     
     //7 start read data
-    /* struct pollfd pollfd[1]; */
-    /* pollfd[0].fd=fd; */
-    /* pollfd[0].events=POLLIN;    //waitting reading data */    
-    /* poll(pollfd,1,10000) */
+     struct pollfd pollfd[1];
+     pollfd[0].fd=fd;
+     pollfd[0].events=POLLIN;    //waitting reading data 
+     poll(pollfd,1,10000);
     struct v4l2_buffer readbuffer;
     readbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     readbuffer.memory=V4L2_MEMORY_MMAP;
