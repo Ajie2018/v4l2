@@ -81,6 +81,7 @@ int main(void)
     struct v4l2_buffer v4l2_mapbuffer;
     v4l2_mapbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     unsigned char *mptr[4];
+    unsigned int mplen[4];
     for(int i=0;i<4;++i){
         v4l2_mapbuffer.index=i;
         ret = ioctl(fd,VIDIOC_QUERYBUF,&v4l2_mapbuffer);
@@ -88,6 +89,7 @@ int main(void)
             printf("errline%d:query kernel buffers failed!\n",__LINE__);
         }
         mptr[i]=(unsigned char *)mmap(NULL,v4l2_mapbuffer.length,PROT_READ|PROT_WRITE,MAP_SHARED,fd,v4l2_mapbuffer.m.offset);
+        mplen[i]=v4l2_mapbuffer.length;
         ret = ioctl(fd,VIDIOC_QBUF,&v4l2_mapbuffer);
         if (ret < 0) {
             printf("errline%d:map kernel buffers failed!\n",__LINE__);
@@ -100,8 +102,8 @@ int main(void)
     if (ret < 0) {
         printf("errline%d:streamon failed!\n",__LINE__);
     }
-    
 
+    //7.get datas from queuce space
     struct v4l2_buffer v4l2_readbuffer;
     v4l2_readbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
     ret = ioctl(fd,VIDIOC_DQBUF,&v4l2_readbuffer);
@@ -117,9 +119,14 @@ int main(void)
     if (ret < 0) {
         printf("errline%d:return quence failed!\n",__LINE__);
     }
+    //8 stop sample pictures
     ret = ioctl(fd,VIDIOC_STREAMOFF,&type);
     if (ret < 0) {
         printf("errline%d:streamoff failed!\n",__LINE__);
+    }
+
+    for(int i=0;i<4;++i){
+        munmap(mptr[i],mplen[i]);
     }
 
     //9.close device 
