@@ -8,6 +8,15 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <linux/videodev2.h>
+#include <linux/fb.h>
+#include <jpeglib.h>
+
+unsigned int lcd_h=1366;
+unsigned int lcd_w=768;
+
+
+int read_jpeg_file(const unsigned char *jpegDate,const unsigned char *rgbDate,int size);
+int lcd_show_rgb(unsigned int *lcdptr,unsigned char *rgbData,int w,int h);
 
 int main(void)
 {
@@ -39,8 +48,8 @@ int main(void)
     //3.set sample format
     struct v4l2_format v4l2_format;
     v4l2_format.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    v4l2_format.fmt.pix.width=640;
-    v4l2_format.fmt.pix.height=480;
+    v4l2_format.fmt.pix.width=lcd_w;
+    v4l2_format.fmt.pix.height=lcd_h;
     v4l2_format.fmt.pix.pixelformat=V4L2_PIX_FMT_MJPEG;
 
     ret = ioctl(fd,VIDIOC_S_FMT,&v4l2_format);
@@ -55,7 +64,7 @@ int main(void)
     {
         printf("errline%d:get format failed!\n",__LINE__);
     }
-    if(v4l2_format.fmt.pix.width==640 && v4l2_format.fmt.pix.height==480 && 
+    if(v4l2_format.fmt.pix.width==lcd_w && v4l2_format.fmt.pix.height==lcd_h && 
        v4l2_format.fmt.pix.pixelformat==V4L2_PIX_FMT_MJPEG)
     {
         printf("set format succeed!\n");
@@ -74,7 +83,7 @@ int main(void)
     ret = ioctl(fd,VIDIOC_REQBUFS,&v4l2_reqbuffers);
     if (ret < 0)
     {
-        printf("errline%d:require buffers failed!\n");
+        printf("errline%d:require buffers failed!\n",__LINE__);
     }
 
     //5.map  quence memory
@@ -103,21 +112,33 @@ int main(void)
         printf("errline%d:streamon failed!\n",__LINE__);
     }
 
-    //7.get datas from queuce space
-    struct v4l2_buffer v4l2_readbuffer;
-    v4l2_readbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    ret = ioctl(fd,VIDIOC_DQBUF,&v4l2_readbuffer);
-    if (ret < 0) {
-        printf("errline%d:extract data failed!\n",__LINE__);
-    }
+    unsigned char rgbData[1366*768*3];
     
-    FILE *fp=fopen("picture.jpg","w+");
-    fwrite(mptr[v4l2_readbuffer.index],v4l2_readbuffer.length,1,fp);
-    fclose(fp);
+    int lcdfd = open("/dev/fb0",O_RDWR);
+    if (lcdfd < 0) printf("errline%d:open lcd failed!\n",__LINE__);
+    unsigned int *lcdptr = (unsigned int *)mmap(NULL,lcd_w*lcd_h*4,PROT_READ|PROT_WRITE,MAP_SHARED,lcdfd,0);
+    struct fb_var_screeninfo binfo;
+    ret = ioctl(lcdfd,FBIOGET_VSCREENINFO,&binfo);
+    lcd_w = binfo.xres;
+    lcd_h = binfo.yres;
 
-    ret = ioctl(fd,VIDIOC_QBUF,&v4l2_readbuffer);
-    if (ret < 0) {
-        printf("errline%d:return quence failed!\n",__LINE__);
+    while(1){
+        //7.get datas from queuce space
+        struct v4l2_buffer v4l2_readbuffer;
+        v4l2_readbuffer.type=V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        ret = ioctl(fd,VIDIOC_DQBUF,&v4l2_readbuffer);
+        if (ret < 0) {
+            printf("errline%d:extract data failed!\n",__LINE__);
+        }
+        
+        //display on screan
+        read_jpeg_file(mptr[v4l2_readbuffer.index],rgbData,v4l2_readbuffer.length);
+        lcd_show_rgb(lcdptr,rgbData,lcd_w,lcd_h);
+
+        ret = ioctl(fd,VIDIOC_QBUF,&v4l2_readbuffer);
+        if (ret < 0) {
+            printf("errline%d:return quence failed!\n",__LINE__);
+        }
     }
     //8 stop sample pictures
     ret = ioctl(fd,VIDIOC_STREAMOFF,&type);
@@ -128,11 +149,49 @@ int main(void)
     for(int i=0;i<4;++i){
         munmap(mptr[i],mplen[i]);
     }
-
     //9.close device 
     close(fd);
 
     return 0;
 }
 
+int read_jpeg_file(const unsigned char *jpegData,const unsigned char *rgbData,int size){
+    struct jpeg_error_mgr jerr;
+    struct jpeg_decompress_struct cinfo;
+    cinfo.err=jpeg_std_error(&jerr);
+    //creat jpeg_decompress object
+    jpeg_create_decompress(&cinfo);
+    //put in decompress data
+    //jpeg_stdio_src(&cinfo,infile);
+    jpeg_mem_src(&cinfo,jpegData,size);
+    //get pic para
+    jpeg_read_header(&cinfo,TRUE);
+    //start decompress
+    jpeg_start_decompress(&cinfo);
+    //ask for memory to store a line of data
+    int row_stride=cinfo.output_width * cinfo.output_components;
+    unsigned char *buffer=malloc(row_stride);
+    int i=0;
+    while(cinfo.output_scanline < cinfo.output_height){
+        jpeg_read_scanlines(&cinfo,&buffer,1);
+        memcpy((void *)(rgbData+i*lcd_w*3),buffer,row_stride);
+        ++i;
+    }
+    //finish decompress
+    jpeg_finish_decompress(&cinfo);
+    //release decompress object
+    jpeg_destroy_decompress(&cinfo);
+    return 0;
+}
 
+int lcd_show_rgb(unsigned int *lcdptr,unsigned char *rgbData,int w,int h){
+    unsigned int *ptr = lcdptr;
+    for (int i=0; i<h; ++i){
+        for(int j=0; j<w; ++j){
+            memcpy(ptr+j,rgbData+j*3,3);
+        }
+        ptr += lcd_w;
+        rgbData += w*3;
+    }
+    return 0;
+}
